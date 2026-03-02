@@ -145,6 +145,63 @@ input[type="range"] {
   color: var(--muted);
 }
 
+.toggle-row {
+  margin-top: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+
+.mini-sequencer {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.seq-step {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: 1px solid rgba(23, 35, 54, 0.35);
+  outline-offset: 1px;
+  min-width: 34px;
+  height: 30px;
+  padding: 4px 8px;
+  font-family: "IBM Plex Mono", Menlo, Monaco, monospace;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.seq-step.is-pulsing {
+  animation: step-outline-pulse 180ms ease-out;
+}
+
+.seq-step.is-on {
+  background: #3b9f57;
+  color: #fff;
+  border-color: #2f7f46;
+}
+
+.seq-step.is-off {
+  background: rgba(255, 255, 255, 0.72);
+  color: #8a2d2d;
+  border-color: rgba(138, 45, 45, 0.25);
+}
+
+@keyframes step-outline-pulse {
+  0% {
+    outline-width: 1px;
+  }
+  40% {
+    outline-width: 4px;
+  }
+  100% {
+    outline-width: 1px;
+  }
+}
+
 .generators {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));

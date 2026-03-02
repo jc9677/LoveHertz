@@ -1,6 +1,7 @@
 const globalSlider = document.querySelector("#global-frequency");
 const globalFrequencyInput = document.querySelector("#global-frequency-input");
 const globalFrequencyLabel = document.querySelector("#global-frequency-label");
+const specialModeToggle = document.querySelector("#special-mode-toggle");
 const audioToggle = document.querySelector("#audio-toggle");
 
 const generatorElements = Array.from(document.querySelectorAll(".generator"));
@@ -10,6 +11,7 @@ const generators = generatorElements.map((element, index) => ({
   waveformSelect: element.querySelector(".waveform-select"),
   ratioSlider: element.querySelector(".ratio-slider"),
   ratioInput: element.querySelector(".ratio-input"),
+  sequenceContainer: element.querySelector(".mini-sequencer"),
   gainSlider: element.querySelector(".gain-slider"),
   ratioLabel: element.querySelector(".ratio-label"),
   gainLabel: element.querySelector(".gain-label"),
@@ -17,6 +19,8 @@ const generators = generatorElements.map((element, index) => ({
   waveformIndex: Number(element.querySelector(".waveform-select").value),
   ratio: Number(element.querySelector(".ratio-slider").value),
   gain: Number(element.querySelector(".gain-slider").value),
+  sequence: [],
+  stepButtons: [],
   node: null,
   gainNode: null,
   filterNode: null,
@@ -32,6 +36,7 @@ const panSpread = [-0.6, 0, 0.6];
 const MIN_HZ = 0.1;
 const MAX_HZ = 20000;
 const MIN_RATIO = 0.25;
+const MIN_SPECIAL_RATIO = 1;
 const MAX_RATIO = 12;
 
 function clamp(value, min, max) {
@@ -61,6 +66,140 @@ function calculateActualFrequency(ratio) {
   return clamp(baseFrequencyHz * ratio, 0.1, MAX_HZ);
 }
 
+function isSpecialModeEnabled() {
+  return Boolean(specialModeToggle?.checked);
+}
+
+function normalizeRatio(rawValue) {
+  const min = isSpecialModeEnabled() ? MIN_SPECIAL_RATIO : MIN_RATIO;
+  const clamped = clamp(rawValue, min, MAX_RATIO);
+  return isSpecialModeEnabled() ? Math.round(clamped) : clamped;
+}
+
+function getSequenceStepCount(generator) {
+  return Math.max(1, Math.round(generator.ratio));
+}
+
+function pushSequenceToWorklet(generator, forceBypass = false) {
+  if (!generator.node) {
+    return;
+  }
+
+  if (forceBypass || !isSpecialModeEnabled()) {
+    generator.node.port.postMessage({
+      type: "set-sequence",
+      stepCount: 1,
+      sequence: [true],
+    });
+    return;
+  }
+
+  generator.node.port.postMessage({
+    type: "set-sequence",
+    stepCount: generator.sequence.length,
+    sequence: generator.sequence,
+  });
+}
+
+function pulseGeneratorStep(generator, stepIndex) {
+  if (!Array.isArray(generator.stepButtons) || generator.stepButtons.length === 0) {
+    return;
+  }
+
+  const normalized = Number(stepIndex);
+  if (!Number.isFinite(normalized)) {
+    return;
+  }
+
+  const buttonIndex = ((Math.floor(normalized) % generator.stepButtons.length) + generator.stepButtons.length)
+    % generator.stepButtons.length;
+  const button = generator.stepButtons[buttonIndex];
+  if (!button) {
+    return;
+  }
+
+  button.classList.remove("is-pulsing");
+  void button.offsetWidth;
+  button.classList.add("is-pulsing");
+}
+
+function renderGeneratorSequencer(generator) {
+  if (!generator.sequenceContainer) {
+    return;
+  }
+
+  if (!isSpecialModeEnabled()) {
+    generator.sequenceContainer.hidden = true;
+    generator.sequenceContainer.innerHTML = "";
+    generator.stepButtons = [];
+    return;
+  }
+
+  generator.sequenceContainer.hidden = false;
+  generator.sequenceContainer.innerHTML = "";
+  generator.stepButtons = [];
+
+  generator.sequence.forEach((isEnabled, stepIndex) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `seq-step ${isEnabled ? "is-on" : "is-off"}`;
+    button.textContent = String(stepIndex + 1);
+    button.title = `Cycle step ${stepIndex + 1}`;
+
+    button.addEventListener("click", () => {
+      generator.sequence[stepIndex] = !generator.sequence[stepIndex];
+      renderGeneratorSequencer(generator);
+      pushSequenceToWorklet(generator);
+    });
+
+    generator.sequenceContainer.appendChild(button);
+    generator.stepButtons.push(button);
+  });
+}
+
+function syncGeneratorSequencer(generator) {
+  if (!isSpecialModeEnabled()) {
+    renderGeneratorSequencer(generator);
+    pushSequenceToWorklet(generator, true);
+    return;
+  }
+
+  const stepCount = getSequenceStepCount(generator);
+  if (!Array.isArray(generator.sequence) || generator.sequence.length === 0) {
+    generator.sequence = Array(stepCount).fill(true);
+  } else if (generator.sequence.length !== stepCount) {
+    const resized = generator.sequence.slice(0, stepCount);
+    while (resized.length < stepCount) {
+      resized.push(true);
+    }
+    generator.sequence = resized;
+  }
+
+  renderGeneratorSequencer(generator);
+  pushSequenceToWorklet(generator);
+}
+
+function applyRatioControlMode() {
+  const specialMode = isSpecialModeEnabled();
+
+  generators.forEach((generator) => {
+    generator.ratioSlider.min = specialMode ? String(MIN_SPECIAL_RATIO) : String(MIN_RATIO);
+    generator.ratioSlider.step = specialMode ? "1" : "0.01";
+    generator.ratioInput.min = specialMode ? String(MIN_SPECIAL_RATIO) : String(MIN_RATIO);
+    generator.ratioInput.step = specialMode ? "1" : "0.01";
+    generator.ratio = normalizeRatio(generator.ratio);
+    generator.ratioSlider.value = String(generator.ratio);
+    syncGeneratorSequencer(generator);
+  });
+}
+
+function setGeneratorRatio(generator, newRatio) {
+  generator.ratio = normalizeRatio(newRatio);
+  generator.ratioSlider.value = String(generator.ratio);
+  syncGeneratorSequencer(generator);
+  updateLabelsAndFrequencies();
+}
+
 function updateLabelsAndFrequencies() {
   globalFrequencyLabel.textContent = formatHz(baseFrequencyHz);
   globalFrequencyInput.value = baseFrequencyHz.toFixed(2);
@@ -69,8 +208,12 @@ function updateLabelsAndFrequencies() {
   generators.forEach((generator) => {
     const actualFrequency = calculateActualFrequency(generator.ratio);
     generator.actualFrequencyLabel.textContent = formatHz(actualFrequency);
-    generator.ratioLabel.textContent = `${generator.ratio.toFixed(2)}x`;
-    generator.ratioInput.value = generator.ratio.toFixed(2);
+    generator.ratioLabel.textContent = isSpecialModeEnabled()
+      ? `${Math.round(generator.ratio)}x`
+      : `${generator.ratio.toFixed(2)}x`;
+    generator.ratioInput.value = isSpecialModeEnabled()
+      ? String(Math.round(generator.ratio))
+      : generator.ratio.toFixed(2);
     generator.gainLabel.textContent = generator.gain.toFixed(3);
 
     if (generator.node && audioContext) {
@@ -119,14 +262,12 @@ function setRatioFromTypedInput(index) {
     return;
   }
 
-  generator.ratio = clamp(typedValue, MIN_RATIO, MAX_RATIO);
-  generator.ratioSlider.value = String(generator.ratio);
-  updateLabelsAndFrequencies();
+  setGeneratorRatio(generator, typedValue);
 }
 
 async function createAudioEngine() {
   audioContext = new AudioContext();
-  await audioContext.audioWorklet.addModule("./audio-worklet.js");
+  await audioContext.audioWorklet.addModule("./audio-worklet.js?v=7");
 
   masterGain = new GainNode(audioContext, { gain: 0.8 });
   masterGain.connect(audioContext.destination);
@@ -142,6 +283,15 @@ async function createAudioEngine() {
       },
     });
 
+    generator.node.port.onmessage = (event) => {
+      const message = event.data;
+      if (!message || message.type !== "step-trigger") {
+        return;
+      }
+
+      pulseGeneratorStep(generator, message.stepIndex);
+    };
+
     generator.filterNode = new BiquadFilterNode(audioContext, {
       type: "highpass",
       frequency: 10,
@@ -155,6 +305,8 @@ async function createAudioEngine() {
     generator.filterNode.connect(generator.gainNode);
     generator.gainNode.connect(generator.pannerNode);
     generator.pannerNode.connect(masterGain);
+
+    syncGeneratorSequencer(generator);
   });
 }
 
@@ -190,8 +342,7 @@ function wireEvents() {
     });
 
     generator.ratioSlider.addEventListener("input", () => {
-      generator.ratio = Number(generator.ratioSlider.value);
-      updateLabelsAndFrequencies();
+      setGeneratorRatio(generator, Number(generator.ratioSlider.value));
     });
 
     generator.ratioInput.addEventListener("input", () => {
@@ -221,6 +372,11 @@ function wireEvents() {
       audioToggle.disabled = false;
     }
   });
+
+  specialModeToggle.addEventListener("change", () => {
+    applyRatioControlMode();
+    updateLabelsAndFrequencies();
+  });
 }
 
 function init() {
@@ -228,6 +384,8 @@ function init() {
   if (Number.isFinite(initialTyped)) {
     baseFrequencyHz = clamp(initialTyped, MIN_HZ, MAX_HZ);
   }
+
+  applyRatioControlMode();
 
   wireEvents();
   updateLabelsAndFrequencies();
