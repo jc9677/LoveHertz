@@ -25,12 +25,6 @@ class ImpulseTrainProcessor extends AudioWorkletProcessor {
     this.cycleCounter = 0;
     this.currentStep = 0;
     this.sequence = [1];
-    this.gateEnvelope = 1;
-    // this.attackTauSeconds = 0.0015;
-    this.attackTauSeconds = 0.0;
-    this.releaseTauSeconds = 0.0025;
-    this.attackCoeff = 1 - Math.exp(-1 / (sampleRate * this.attackTauSeconds));
-    this.releaseCoeff = 1 - Math.exp(-1 / (sampleRate * this.releaseTauSeconds));
 
     this.port.onmessage = (event) => {
       const message = event.data;
@@ -62,39 +56,37 @@ class ImpulseTrainProcessor extends AudioWorkletProcessor {
       const waveformRaw = waveformValues.length === 1 ? waveformValues[0] : waveformValues[i];
       const waveformIndex = Math.max(0, Math.min(4, Math.round(waveformRaw)));
       const phaseStep = frequency / sampleRate;
-      let samplePhase = this.phase;
       let didAdvanceStep = false;
 
-      const phaseAfterStep = this.phase + phaseStep;
-      if (phaseAfterStep >= 1) {
-        const wraps = Math.floor(phaseAfterStep);
-        this.phase = phaseAfterStep - wraps;
+      this.phase += phaseStep;
+      if (this.phase >= 1) {
+        const wraps = Math.floor(this.phase);
+        this.phase -= wraps;
         this.cycleCounter += wraps;
         this.currentStep = this.cycleCounter % this.stepCount;
-        samplePhase = this.phase;
         didAdvanceStep = true;
         lastTriggeredStep = this.currentStep;
-      } else {
-        this.phase = phaseAfterStep;
       }
 
-      const gateTarget = this.sequence[this.currentStep] ? 1 : 0;
-      const gateCoeff = gateTarget > this.gateEnvelope ? this.attackCoeff : this.releaseCoeff;
-      this.gateEnvelope += (gateTarget - this.gateEnvelope) * gateCoeff;
-      const shapedGate = this.gateEnvelope;
+      const samplePhase = this.phase;
+      const stepEnabled = this.sequence[this.currentStep] !== 0;
+
+      if (!stepEnabled) {
+        output[i] = 0;
+        continue;
+      }
 
       if (waveformIndex === 0) {
-        // Emit click when we enter an enabled step (step start, not step end).
-        const isStartOfEnabledCycle = didAdvanceStep && gateTarget === 1;
+        const isStartOfEnabledCycle = didAdvanceStep;
         output[i] = isStartOfEnabledCycle ? 1 : 0;
       } else if (waveformIndex === 1) {
-        output[i] = shapedGate * Math.sin(2 * Math.PI * samplePhase);
+        output[i] = Math.sin(2 * Math.PI * samplePhase);
       } else if (waveformIndex === 2) {
-        output[i] = shapedGate * (1 - 4 * Math.abs(samplePhase - 0.5));
+        output[i] = 1 - 4 * Math.abs(samplePhase - 0.5);
       } else if (waveformIndex === 3) {
-        output[i] = shapedGate * (2 * samplePhase - 1);
+        output[i] = 1 - samplePhase;
       } else {
-        output[i] = shapedGate * (samplePhase < 0.5 ? 1 : -1);
+        output[i] = samplePhase < 0.5 ? 1 : -1;
       }
     }
 
