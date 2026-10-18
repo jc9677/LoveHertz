@@ -251,6 +251,19 @@ function setGlobalFromSlider() {
   updateLabelsAndFrequencies();
 }
 
+function handleGlobalFrequencyInputKeydown(event) {
+  if (!event.shiftKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) {
+    return;
+  }
+
+  event.preventDefault();
+  const direction = event.key === "ArrowUp" ? 1 : -1;
+  const currentValue = Number(globalFrequencyInput.value);
+  const safeValue = Number.isFinite(currentValue) ? currentValue : baseFrequencyHz;
+  baseFrequencyHz = clamp(safeValue + direction, MIN_HZ, MAX_HZ);
+  updateLabelsAndFrequencies();
+}
+
 function setRatioFromTypedInput(index) {
   const generator = generators[index];
   if (!generator) {
@@ -330,6 +343,7 @@ function wireEvents() {
   globalSlider.addEventListener("input", setGlobalFromSlider);
   globalFrequencyInput.addEventListener("input", setGlobalFromTypedInput);
   globalFrequencyInput.addEventListener("change", setGlobalFromTypedInput);
+  globalFrequencyInput.addEventListener("keydown", handleGlobalFrequencyInputKeydown);
 
   generators.forEach((generator, index) => {
     generator.waveformSelect.addEventListener("change", () => {
